@@ -2,10 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="description" content="Underwater Balloons Pop - Interactive Rive Animation">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>Underwater Balloons Pop</title>
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
       padding: 0;
@@ -15,43 +21,171 @@
       align-items: center;
       min-height: 100vh;
       font-family: system-ui, -apple-system, sans-serif;
+      overflow: hidden;
+      position: relative;
     }
-    
+
+    /* Loading spinner */
+    #loader {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 20px;
+      color: white;
+    }
+
+    #loader.hidden {
+      display: none;
+    }
+
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 4px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Rotate overlay for mobile portrait */
+    #rotate-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%);
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 999;
+      color: white;
+      text-align: center;
+      padding: 20px;
+    }
+
+    #rotate-overlay.show {
+      display: flex;
+    }
+
+    #rotate-overlay .rotate-icon {
+      font-size: 64px;
+      margin-bottom: 20px;
+      animation: rotate 2s linear infinite;
+    }
+
+    @keyframes rotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(90deg); }
+    }
+
+    #rotate-overlay h2 {
+      margin: 0 0 10px 0;
+      font-size: 24px;
+    }
+
+    #rotate-overlay p {
+      margin: 0;
+      font-size: 16px;
+      opacity: 0.9;
+    }
+
+    /* Canvas container */
     #canvas-container {
       width: 100%;
-      max-width: 1000px;
+      max-width: 1200px;
       aspect-ratio: 1000 / 422;
       background: white;
       border-radius: 12px;
       box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
       margin: 20px;
+      position: relative;
+      will-change: contents;
     }
-    
+
+    /* Mobile landscape - fullscreen */
+    @media (max-width: 1024px) and (orientation: landscape) {
+      body {
+        padding: 0;
+      }
+
+      #canvas-container {
+        width: 100vw;
+        height: 100vh;
+        max-width: none;
+        margin: 0;
+        border-radius: 0;
+        aspect-ratio: auto;
+      }
+
+      canvas {
+        border-radius: 0;
+      }
+    }
+
+    /* Desktop - centered with spacing */
+    @media (min-width: 1025px) {
+      body {
+        padding: 40px 20px;
+      }
+
+      #canvas-container {
+        margin: 40px;
+      }
+    }
+
     canvas {
       width: 100%;
       height: 100%;
       display: block;
       border-radius: 12px;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: crisp-edges;
+      touch-action: none;
     }
-    
-    /* Mobile optimization */
-    @media (max-width: 640px) {
+
+    /* Mobile portrait */
+    @media (max-width: 1024px) and (orientation: portrait) {
       body {
-        padding: 10px;
+        padding: 0;
       }
-      
+
       #canvas-container {
-        margin: 10px;
-        border-radius: 8px;
-      }
-      
-      canvas {
-        border-radius: 8px;
+        width: 100vw;
+        height: 100vh;
+        max-width: none;
+        margin: 0;
+        border-radius: 0;
+        aspect-ratio: auto;
       }
     }
   </style>
 </head>
 <body>
+  <!-- Loading spinner -->
+  <div id="loader">
+    <div class="spinner"></div>
+    <p>Loading game...</p>
+  </div>
+
+  <!-- Rotate overlay for mobile portrait -->
+  <div id="rotate-overlay">
+    <div class="rotate-icon">📱</div>
+    <h2>Rotate Your Device</h2>
+    <p>Please rotate your device to landscape mode for the best experience</p>
+  </div>
+
+  <!-- Canvas container -->
   <div id="canvas-container">
     <canvas id="canvas"></canvas>
   </div>
@@ -59,31 +193,176 @@
   <script type="module">
     import { Rive, Fit, Layout, Alignment } from '@rive-app/webgl2';
 
+    // Performance optimization: Cap device pixel ratio at 2
+    const DPR = Math.min(window.devicePixelRatio || 1, 2);
+    
     const canvas = document.getElementById('canvas');
+    const container = document.getElementById('canvas-container');
+    const loader = document.getElementById('loader');
+    const rotateOverlay = document.getElementById('rotate-overlay');
 
-    const r = new Rive({
-      src: import.meta.env.BASE_URL + 'kid_game_final_v2.riv',
+    // Detect mobile device
+    const isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+    // Debounce function
+    function debounce(func, wait) {
+      let timeout;
+      return function executedFunction(...args) {
+        const later = () => {
+          clearTimeout(timeout);
+          func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+      };
+    }
+
+    // Resize canvas with proper DPR handling
+    function resizeCanvas() {
+      const rect = container.getBoundingClientRect();
+      const displayWidth = rect.width;
+      const displayHeight = rect.height;
+      
+      // Set canvas internal size
+      canvas.width = displayWidth * DPR;
+      canvas.height = displayHeight * DPR;
+      
+      // Set canvas display size
+      canvas.style.width = displayWidth + 'px';
+      canvas.style.height = displayHeight + 'px';
+      
+      // Resize Rive drawing surface
+      if (r) {
+        r.resizeDrawingSurfaceToCanvas();
+      }
+    }
+
+    // Check orientation and show/hide rotate overlay
+    function checkOrientation() {
+      if (!isMobile) {
+        rotateOverlay.classList.remove('show');
+        return;
+      }
+
+      const isPortrait = window.innerHeight > window.innerWidth;
+      
+      if (isPortrait) {
+        rotateOverlay.classList.add('show');
+      } else {
+        rotateOverlay.classList.remove('show');
+        // Auto-request fullscreen when in landscape on mobile
+        if (isMobile && !document.fullscreenElement) {
+          requestFullscreen();
+        }
+      }
+    }
+
+    // Request fullscreen
+    function requestFullscreen() {
+      const element = document.documentElement;
+      if (element.requestFullscreen) {
+        element.requestFullscreen().catch(err => {
+          console.log('Fullscreen request failed:', err);
+        });
+      } else if (element.webkitRequestFullscreen) {
+        element.webkitRequestFullscreen();
+      } else if (element.mozRequestFullScreen) {
+        element.mozRequestFullScreen();
+      } else if (element.msRequestFullscreen) {
+        element.msRequestFullscreen();
+      }
+    }
+
+    // Hide loader
+    function hideLoader() {
+      loader.classList.add('hidden');
+    }
+
+    // Initialize Rive
+    let r;
+    
+    r = new Rive({
+      src: import.meta.env.BASE_URL + 'kid_game_final_submit.riv',
       canvas: canvas,
       stateMachines: 'State Machine 1',
       artboard: 'Main Game',
       autoplay: true,
       autoBind: true,
-      useOffscreenRenderer: true,
+      // Removed useOffscreenRenderer for better performance
       layout: new Layout({
         fit: Fit.Contain,
         alignment: Alignment.Center
       }),
       onLoad: () => {
-        r.resizeDrawingSurfaceToCanvas();
+        resizeCanvas();
+        hideLoader();
+        checkOrientation();
+      },
+      onLoadError: (error) => {
+        console.error('Rive load error:', error);
+        hideLoader();
+        alert('Failed to load game. Please refresh the page.');
       }
     });
 
-    window.addEventListener('resize', () => {
-      r.resizeDrawingSurfaceToCanvas();
+    // Debounced resize handler
+    const debouncedResize = debounce(() => {
+      resizeCanvas();
+      checkOrientation();
+    }, 150);
+
+    window.addEventListener('resize', debouncedResize);
+
+    // Orientation change handler
+    window.addEventListener('orientationchange', () => {
+      setTimeout(() => {
+        resizeCanvas();
+        checkOrientation();
+      }, 100);
     });
-    
+
+    // Screen orientation API (if available)
+    if (screen.orientation) {
+      screen.orientation.addEventListener('change', () => {
+        setTimeout(() => {
+          resizeCanvas();
+          checkOrientation();
+        }, 100);
+      });
+    }
+
+    // Fullscreen change handler
+    document.addEventListener('fullscreenchange', () => {
+      setTimeout(() => {
+        resizeCanvas();
+      }, 100);
+    });
+
+    document.addEventListener('webkitfullscreenchange', () => {
+      setTimeout(() => {
+        resizeCanvas();
+      }, 100);
+    });
+
     // Prevent context menu on mobile
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Prevent default touch behaviors
+    canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    }, { passive: false });
+
+    // Initial setup
+    checkOrientation();
+    resizeCanvas();
   </script>
 </body>
 </html>
